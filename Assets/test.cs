@@ -5,6 +5,7 @@ using Unity.WebRTC;
 using WebSocketSharp;
 using System;
 using System.Text;
+using UnityEngine.UI;
 
 internal static class WebRTCSettings
 {
@@ -41,12 +42,19 @@ public class Data
     public string name;
     public string room;
     public bool success;
+    public RTCSessionDescription offer;
+    public RTCSessionDescription answer;
+    public RTCIceCandidate candidate;
+    public string mid;
 }
 
 
 public class test : MonoBehaviour
 {
     [SerializeField] private Camera cam;
+    [SerializeField] private RawImage sourceImage;
+
+    private DelegateOnIceCandidate connIceCandidate;
 
     // Start is called before the first frame update
     private string IP = "192.168.1.143";
@@ -59,21 +67,38 @@ public class test : MonoBehaviour
     private string target;
 
 
+    private static RTCConfiguration pc_config()
+    {
+        RTCConfiguration config = default;
+        config.iceServers = new[] { new RTCIceServer { urls = new[] { "stun:stun.l.google.com:19302" } } };
+
+        return config;
+    }
+
     private void Awake()
     {
         WebRTC.Initialize(WebRTCSettings.LimitTextureSize);
+    }
+    private Data onLogin()
+    {
+        Data data = new Data();
+        data.type = "join_room";
+        data.name = "user";
+        data.room = "test";
+        data.mid = "0001";
+        return data;
     }
     void Start()
     {
         try
         {
             connection = new WebSocket("ws://" + IP + ":" + PORT);
-            // connection = new WebSocket("ws://192.168.1.143:8080");
-            connection.Connect();
-            Debug.Log("소켓 서버와 연결 되었습니다");
             connection.OnMessage += Recv;
             connection.OnClose += CloseConnection;
-        } catch(Exception)
+            connection.Connect();
+            SendTo(onLogin());
+        }
+        catch (Exception)
         {
             throw;
         }
@@ -93,6 +118,11 @@ public class test : MonoBehaviour
         }
     }
 
+    private void OpenConnection(object sender, CloseEventArgs e)
+    {
+        Debug.Log("소켓 서버와 연결되었습니다.");
+    }
+
     private void CloseConnection(object sender, CloseEventArgs e)
     {
         DisconnectServer();
@@ -100,6 +130,7 @@ public class test : MonoBehaviour
 
     public void DisconnectServer()
     {
+        Debug.Log("DisconnectServer");
         try
         {
             if(connection == null)
@@ -121,14 +152,36 @@ public class test : MonoBehaviour
 
     public void Recv(object sender, MessageEventArgs e)
     {
-        Debug.Log("Message Received from " + ((WebSocket)sender).Url + ", Data : " + e.Data);
-        Data recvData = JsonUtility.FromJson<Data>(e.Data);
-        switch(recvData.type)
+        MainThreadHelper.AddAction(() =>
         {
-            case "login":
-                handleLogin(recvData.success);
-            break;
-        }
+            try
+            {
+                Data recvData = JsonUtility.FromJson<Data>(e.Data);
+                switch (recvData.type)
+                {
+                    case "login":
+                        handleLogin(recvData.success);
+                        break;
+                    case "offer":
+                        handleOffer(recvData.offer, recvData.name);
+                        break;
+                    case "answer":
+                        handleAnswer(recvData.answer);
+                        break;
+                    case "candidate":
+                        handleCandidate(recvData.candidate);
+                        break;
+                    case "leave":
+                        handleLeave();
+                        break;
+                }
+            }
+            catch (Exception error)
+            {
+                Debug.LogError($"Message: {error.Message}\nStackTrace: {error.StackTrace}");
+                throw error;
+            }
+        });
     }
 
     public void handleLogin(bool success)
@@ -139,45 +192,75 @@ public class test : MonoBehaviour
         } else
         {
             Debug.Log("로그인 성공!!");
-            conn = new RTCPeerConnection();
+            var configuration = pc_config();
 
+            conn = new RTCPeerConnection(ref configuration);
 
-            // get Track
             if (videoStream == null)
             {
                 videoStream = cam.CaptureStream(WebRTCSettings.StreamSize.x, WebRTCSettings.StreamSize.y, 1000000);
             }
 
+            sourceImage.texture = cam.targetTexture;
+            sourceImage.color = Color.white;
+
             // add Track
-            foreach (var track in videoStream.GetTracks())
+            // foreach (var track in videoStream.GetTracks())
+            // {
+            // conn.AddTrack(track, videoStream);
+            // }
+
+            conn.OnIceCandidate = e =>
             {
-                conn.AddTrack(track, videoStream);
-            }
-
-
+                Debug.Log("Candidate");
+                Debug.Log(e.Candidate);
+            };
         }
     }
 
     public void handleOffer(RTCSessionDescription offer, string name)
     {
-        if(!(connection.IsAlive && conn == null))
-        {
+        Debug.Log("offer");
+        Debug.Log(offer);
+        Debug.Log("name");
+        Debug.Log(name);
+        Debug.Log("유저가 오퍼를 받음");
+        target = name;
+        conn.SetRemoteDescription(ref offer);
+        Debug.Log("유저가 offer를 setRemoteDescription에 저장 했습니다");
 
-        }
-
+        var answer = conn.CreateAnswer();
+        onCreateAnswerSuccess(conn, answer.Desc);
     }
 
-    private void Update()
+    void onCreateAnswerSuccess(RTCPeerConnection pc, RTCSessionDescription answer)
     {
-        if(Input.GetKeyDown(KeyCode.Space))
-        {
-            Data data = new Data();
-            data.type = "join_room";
-            data.name = "user";
-            data.room = "test";
-            SendTo(data);
-        }
+        pc.SetLocalDescription(ref answer);
+        Debug.Log("유저가 만든 answer을 setLocalDescription에 저장");
+        Data data = new Data();
+        data.type = "answer";
+        data.answer = answer;
+        data.room = "test";
+        SendTo(data);
     }
+
+    public void handleAnswer(RTCSessionDescription answer)
+    {
+        //
+    }
+
+    public void handleCandidate(RTCIceCandidate candidate)
+    {
+        //
+        conn.OnIceCandidate(candidate);
+        Debug.Log("유저 ICE candidate 등록");
+    }
+
+    public void handleLeave()
+    {
+        //
+    }
+
 
     public void SendTo(Data message)
     {
@@ -188,13 +271,9 @@ public class test : MonoBehaviour
 
         try
         {
-            if(target != null)
-            {
-                message.name = target;
-            }
+
             string msg = JsonUtility.ToJson(message);
             connection.Send(msg);
-
         }
         catch (Exception)
         {
