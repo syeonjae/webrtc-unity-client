@@ -53,18 +53,19 @@ public class test : MonoBehaviour
 {
     [SerializeField] private Camera cam;
     [SerializeField] private RawImage sourceImage;
+    [SerializeField] private Transform rotateObject;
 
     private DelegateOnIceCandidate connIceCandidate;
 
     // Start is called before the first frame update
-    private string IP = "192.168.1.143";
+    private string IP = "192.168.0.165";
     private string PORT = "8080";
 
-    public WebSocket connection = null;
+    public WebSocket ws = null;
 
-    private RTCPeerConnection conn;
+    private RTCPeerConnection pc;
     private MediaStream videoStream;
-    private string target;
+    private string target; // íƒ€ê²Ÿì´ ìˆë‹¤ë©´ í•­ìƒ adminì—ê²Œ
 
 
     private static RTCConfiguration pc_config()
@@ -79,6 +80,20 @@ public class test : MonoBehaviour
     {
         WebRTC.Initialize(WebRTCSettings.LimitTextureSize);
     }
+
+    private void OnDestroy() {
+        WebRTC.Dispose();
+    }
+
+    private void Update()
+    {
+        if (rotateObject != null)
+        {
+            float t = Time.deltaTime;
+            rotateObject.Rotate(100 * t, 200 * t, 300 * t);
+        }
+    }
+
     private Data onLogin()
     {
         Data data = new Data();
@@ -92,10 +107,10 @@ public class test : MonoBehaviour
     {
         try
         {
-            connection = new WebSocket("ws://" + IP + ":" + PORT);
-            connection.OnMessage += Recv;
-            connection.OnClose += CloseConnection;
-            connection.Connect();
+            ws = new WebSocket("ws://" + IP + ":" + PORT);
+            ws.OnMessage += Recv;
+            ws.OnClose += CloseConnection;
+            ws.Connect();
             SendTo(onLogin());
         }
         catch (Exception)
@@ -108,9 +123,9 @@ public class test : MonoBehaviour
     {
         try
         {
-            if(connection == null || !connection.IsAlive)
+            if(ws == null || !ws.IsAlive)
             {
-                connection.Close();
+                ws.Close();
             }
         } catch (Exception e)
         {
@@ -118,13 +133,14 @@ public class test : MonoBehaviour
         }
     }
 
-    private void OpenConnection(object sender, CloseEventArgs e)
-    {
-        Debug.Log("¼ÒÄÏ ¼­¹ö¿Í ¿¬°áµÇ¾ú½À´Ï´Ù.");
-    }
-
     private void CloseConnection(object sender, CloseEventArgs e)
     {
+        Data data = new Data();
+        data.type = "leave";
+        data.room = "test";
+        data.name = "user";
+        target = "";
+        SendTo(data);
         DisconnectServer();
     }
 
@@ -133,14 +149,16 @@ public class test : MonoBehaviour
         Debug.Log("DisconnectServer");
         try
         {
-            if(connection == null)
+            if(ws == null)
             {
                 return;
             }
 
-            if(connection.IsAlive)
+            if(ws.IsAlive)
             {
-                connection.Close();
+                pc.Close();
+                pc.Dispose();
+                pc = null;
             }
         } catch (Exception)
         {
@@ -163,6 +181,10 @@ public class test : MonoBehaviour
                         handleLogin(recvData.success);
                         break;
                     case "offer":
+                        Debug.Log("recvData.type");
+                        Debug.Log(recvData.type);
+                        Debug.Log("recvData.offer");
+                        Debug.Log(recvData.offer);
                         handleOffer(recvData.offer, recvData.name);
                         break;
                     case "answer":
@@ -188,13 +210,13 @@ public class test : MonoBehaviour
     {
         if(!success)
         {
-            Debug.Log("·Î±×ÀÎ ½ÇÆĞ ´Ù½Ã ½ÃµµÇØÁÖ¼¼¿ä");
+            Debug.Log("ë¡œê·¸ì¸ ì‹¤íŒ¨!! ë‹¤ì‹œ ì‹œë„í•´ì£¼ì„¸ìš”");
         } else
         {
-            Debug.Log("·Î±×ÀÎ ¼º°ø!!");
+            Debug.Log("ë¡œê·¸ì¸ ì„±ê³µ");
             var configuration = pc_config();
 
-            conn = new RTCPeerConnection(ref configuration);
+            pc = new RTCPeerConnection(ref configuration);
 
             if (videoStream == null)
             {
@@ -205,15 +227,24 @@ public class test : MonoBehaviour
             sourceImage.color = Color.white;
 
             // add Track
-            // foreach (var track in videoStream.GetTracks())
-            // {
-            // conn.AddTrack(track, videoStream);
-            // }
-
-            conn.OnIceCandidate = e =>
+            foreach (var track in videoStream.GetTracks())
             {
-                Debug.Log("Candidate");
-                Debug.Log(e.Candidate);
+                pc.AddTrack(track, videoStream);
+            }
+
+            pc.OnIceCandidate = candidate =>
+            {
+                try {
+                    target = "admin";
+                    Data data = new Data();
+                    data.type = "candidate";
+                    data.room = "test";
+                    data.candidate = candidate;
+                    SendTo(data);
+                } catch (Exception error) {
+                    Debug.Log("OnIceCandidate");
+                    Debug.Log(error);
+                }
             };
         }
     }
@@ -222,21 +253,18 @@ public class test : MonoBehaviour
     {
         Debug.Log("offer");
         Debug.Log(offer);
-        Debug.Log("name");
-        Debug.Log(name);
-        Debug.Log("À¯Àú°¡ ¿ÀÆÛ¸¦ ¹ŞÀ½");
+        Debug.Log("ìœ ì €ê°€ ì˜¤í¼ë¥¼ ë°›ìŒ");
         target = name;
-        conn.SetRemoteDescription(ref offer);
-        Debug.Log("À¯Àú°¡ offer¸¦ setRemoteDescription¿¡ ÀúÀå Çß½À´Ï´Ù");
+        pc.SetRemoteDescription(ref offer);
+        Debug.Log("ìœ ì €ê°€ offerë¥¼ setRemoteDescriptionì— ë“±ë¡í–ˆìŠµë‹ˆë‹¤.");
 
-        var answer = conn.CreateAnswer();
-        onCreateAnswerSuccess(conn, answer.Desc);
+        var answer = pc.CreateAnswer();
+        onCreateAnswerSuccess(pc, answer.Desc);
     }
 
     void onCreateAnswerSuccess(RTCPeerConnection pc, RTCSessionDescription answer)
     {
         pc.SetLocalDescription(ref answer);
-        Debug.Log("À¯Àú°¡ ¸¸µç answerÀ» setLocalDescription¿¡ ÀúÀå");
         Data data = new Data();
         data.type = "answer";
         data.answer = answer;
@@ -252,8 +280,8 @@ public class test : MonoBehaviour
     public void handleCandidate(RTCIceCandidate candidate)
     {
         //
-        conn.OnIceCandidate(candidate);
-        Debug.Log("À¯Àú ICE candidate µî·Ï");
+        pc.OnIceCandidate(candidate);
+        Debug.Log("ìœ ì €ê°€ ICE candidate ë“±ë¡");
     }
 
     public void handleLeave()
@@ -264,16 +292,14 @@ public class test : MonoBehaviour
 
     public void SendTo(Data message)
     {
-        if (!connection.IsAlive)
+        if (!ws.IsAlive)
         {
             return;
         }
-
         try
         {
-
             string msg = JsonUtility.ToJson(message);
-            connection.Send(msg);
+            ws.Send(msg);
         }
         catch (Exception)
         {
