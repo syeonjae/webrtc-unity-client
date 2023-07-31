@@ -218,7 +218,6 @@ public class test : MonoBehaviour
                     string candidate = data[nameof(candidate)].ToString();
                     string sdpMid = data[nameof(sdpMid)].ToString();
                     int sdpMLineIndex = int.Parse(data[nameof(sdpMLineIndex)].ToString());
-                    //string userNameFragment = data[nameof(userNameFragment)].ToString();
 
                     RTCIceCandidate _candidate = new RTCIceCandidate(new RTCIceCandidateInit()
                     {
@@ -227,8 +226,7 @@ public class test : MonoBehaviour
                         sdpMLineIndex = sdpMLineIndex,
                     });
                     handleCandidate(_candidate);
-
-                    //handleCandidate(recvData.candidate);
+                    
                     break;
                 case "leave":
                     handleLeave();
@@ -250,6 +248,8 @@ public class test : MonoBehaviour
         }
         else
         {
+
+            
             Debug.Log("로그인 성공");
             var configuration = pc_config();
 
@@ -258,9 +258,7 @@ public class test : MonoBehaviour
             videoStream = null;
             MainThreadHelper.AddAction(() =>
             {
-                videoStream = cam.CaptureStream(WebRTCSettings.StreamSize.x, WebRTCSettings.StreamSize.y, 1000000);
-                sourceImage.texture = cam.targetTexture;
-                sourceImage.color = Color.white;
+                videoStream = cam.CaptureStream(WebRTCSettings.StreamSize.x, WebRTCSettings.StreamSize.y, 0);
             });
 
             await System.Threading.Tasks.Task.Run(() =>
@@ -275,20 +273,19 @@ public class test : MonoBehaviour
             Debug.Log($"find videoStream finished");
 
 
-
             // add Track
             var pcVideoSenders = new List<RTCRtpSender>();
             foreach (var track in videoStream.GetTracks())
             {
                 var pcSender = pc.AddTrack(track, videoStream);
 
-                if(track.Kind == TrackKind.Video)
+                if (track.Kind == TrackKind.Video)
                 {
                     pcVideoSenders.Add(pcSender);
                 }
             }
 
-            if(WebRTCSettings.UseVideoCodec != null)
+            if (WebRTCSettings.UseVideoCodec != null)
             {
                 var codecs = new[] { WebRTCSettings.UseVideoCodec };
                 foreach (var transceiver in pc.GetTransceivers())
@@ -299,16 +296,26 @@ public class test : MonoBehaviour
                     }
                 }
             }
+            sourceImage.texture = cam.targetTexture;
+
 
             pc.OnIceCandidate = candidate =>
             {
                 try
                 {
+                    Debug.Log("유저가 어드민에게 icecandidate 전달");
                     target = "admin";
+                    RTCIceCandidate _candidate = new RTCIceCandidate(new RTCIceCandidateInit()
+                    {
+                        candidate = candidate.Candidate,
+                        sdpMid = candidate.SdpMid,
+                        sdpMLineIndex = candidate.SdpMLineIndex,
+                    });
+
                     Data data = new Data();
                     data.type = "candidate";
                     data.room = "test";
-                    data.candidate = candidate;
+                    data.candidate = _candidate;
                     SendTo(data);
                 }
                 catch (Exception error)
@@ -317,7 +324,10 @@ public class test : MonoBehaviour
                     Debug.Log(error);
                 }
             };
+
         }
+        Debug.Log("handleLogin 종료");
+
     }
 
     public async void handleOffer(RTCSessionDescription offer, string name)
@@ -378,7 +388,7 @@ public class test : MonoBehaviour
         Debug.Log($"pc null: {pc == null}");
         //
         pc.AddIceCandidate(candidate);
-        //Debug.Log("유저가 ICE candidate 등록");
+       Debug.Log("유저가 ICE candidate 등록");
     }
 
     public void handleLeave()
