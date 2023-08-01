@@ -628,6 +628,7 @@ MonoBehaviour:
   cam: {fileID: 963194227}
   sourceImage: {fileID: 1399828941}
   rotateObject: {fileID: 812012805}
+  username: 001
 --- !u!1 &1101787630
 GameObject:
   m_ObjectHideFlags: 0

@@ -73,6 +73,7 @@ public class test : MonoBehaviour
     [SerializeField] private Camera cam;
     [SerializeField] private RawImage sourceImage;
     [SerializeField] private Transform rotateObject;
+    [SerializeField] private string username;
 
     private DelegateOnIceCandidate connIceCandidate;
 
@@ -95,7 +96,12 @@ public class test : MonoBehaviour
             urls = new [] {"turn:183.96.152.34" },
             credential = "fakeeyes0906",
             username = "feturn"
-            }};
+            },
+            new RTCIceServer
+            {
+                urls = new [] {"stun:stun.l.google.com:19302"}
+            }
+        };
         return config;
     }
 
@@ -122,7 +128,7 @@ public class test : MonoBehaviour
     {
         Data data = new Data();
         data.type = "join_room";
-        data.name = "user";
+        data.name = username;
         data.room = "test";
         data.mid = "0001";
         return data;
@@ -163,7 +169,7 @@ public class test : MonoBehaviour
         Data data = new Data();
         data.type = "leave";
         data.room = "test";
-        data.name = "user";
+        data.name = username;
         target = "";
         SendTo(data);
         DisconnectServer();
@@ -259,7 +265,7 @@ public class test : MonoBehaviour
             var configuration = pc_config();
 
             pc = new RTCPeerConnection(ref configuration);
-            target = "user";
+            target = username;
             videoStream = null;
             MainThreadHelper.AddAction(() =>
             {
@@ -380,12 +386,12 @@ public class test : MonoBehaviour
             try
             {
                 Debug.Log("유저가 어드민에게 icecandidate 전달");
-                RTCIceCandidate _candidate = new RTCIceCandidate(new RTCIceCandidateInit()
-                {
-                    candidate = candidate.Candidate,
-                    sdpMid = candidate.SdpMid,
-                    sdpMLineIndex = candidate.SdpMLineIndex,
-                });
+                //RTCIceCandidate _candidate = new RTCIceCandidate(new RTCIceCandidateInit()
+                //{
+                //    candidate = candidate.Candidate,
+                //    sdpMid = candidate.SdpMid,
+                //    sdpMLineIndex = candidate.SdpMLineIndex,
+                //});
 
                 //Data data = new Data();
                 //data.type = "candidate";
@@ -396,7 +402,15 @@ public class test : MonoBehaviour
                 //Debug.Log(data.candidate);
                 //SendTo(data);
 
-                string json = "{ \"type\": \"candidate\", \"name\": \"admin\", \"room\": \"test\", \"candidate\" : \" \" }";
+                CustomCandidate customCandidate = new CustomCandidate("candidate", "admin", "test", new RTCIceCandidateInit()
+                {
+                    candidate = candidate.Candidate,
+                    sdpMid = candidate.SdpMid,
+                    sdpMLineIndex = candidate.SdpMLineIndex
+                });
+
+                string json = JsonMapper.ToJson(customCandidate);
+
                 SendToJson(json);
             }
             catch (Exception error)
@@ -405,6 +419,23 @@ public class test : MonoBehaviour
                 Debug.Log(error);
             }
         };
+    }
+
+    [Serializable]
+    private class CustomCandidate
+    {
+        public string type = string.Empty;
+        public string name = string.Empty;
+        public string room = string.Empty;
+        public RTCIceCandidate candidate = null;
+
+        public CustomCandidate(string type, string name, string room, RTCIceCandidateInit candidateInit)
+        {
+            this.type = type;
+            this.name = name;
+            this.room = room;
+            this.candidate = new RTCIceCandidate(candidateInit);
+        }
     }
 
     public void handleAnswer(RTCSessionDescription answer)
