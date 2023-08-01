@@ -75,10 +75,9 @@ public class test : MonoBehaviour
     [SerializeField] private Transform rotateObject;
     [SerializeField] private string username;
 
-    private DelegateOnIceCandidate connIceCandidate;
 
     // Start is called before the first frame update
-    private string IP = "192.168.1.143";
+    private string IP = "localhost";
     private string PORT = "8080";
 
     public WebSocket ws = null;
@@ -86,6 +85,10 @@ public class test : MonoBehaviour
     private RTCPeerConnection pc;
     private MediaStream videoStream = null;
     private string target; // 타겟이 있다면 항상 admin에게
+    private bool videoUpdateStarted = false;
+    private List<RTCRtpSender> pcSenders;
+
+    private DelegateOnIceConnectionChange pcOnIceConnectionChange;
 
 
     private static RTCConfiguration pc_config()
@@ -141,12 +144,14 @@ public class test : MonoBehaviour
             ws.OnMessage += Recv;
             ws.OnClose += CloseConnection;
             ws.Connect();
+            pcSenders = new List<RTCRtpSender>();
             SendTo(onLogin());
         }
         catch (Exception)
         {
             throw;
         }
+
     }
 
     public void Connect()
@@ -259,17 +264,18 @@ public class test : MonoBehaviour
         }
         else
         {
-
-            
             Debug.Log("로그인 성공");
             var configuration = pc_config();
 
             pc = new RTCPeerConnection(ref configuration);
+
+
             target = username;
             videoStream = null;
             MainThreadHelper.AddAction(() =>
             {
-                videoStream = cam.CaptureStream(WebRTCSettings.StreamSize.x, WebRTCSettings.StreamSize.y, 0);
+                videoStream = cam.CaptureStream(WebRTCSettings.DefaultStreamWidth, WebRTCSettings.DefaultStreamWidth, 1000);
+                sourceImage.texture = cam.targetTexture;
             });
 
             await System.Threading.Tasks.Task.Run(() =>
@@ -284,50 +290,25 @@ public class test : MonoBehaviour
             Debug.Log($"find videoStream finished");
 
 
-            // add Track
-            var pcVideoSenders = new List<RTCRtpSender>();
-            foreach (var track in videoStream.GetTracks())
-            {
-                var pcSender = pc.AddTrack(track, videoStream);
-
-                if (track.Kind == TrackKind.Video)
-                {
-                    pcVideoSenders.Add(pcSender);
-                }
-            }
-
-            if (WebRTCSettings.UseVideoCodec != null)
-            {
-                var codecs = new[] { WebRTCSettings.UseVideoCodec };
-                foreach (var transceiver in pc.GetTransceivers())
-                {
-                    if (pcVideoSenders.Contains(transceiver.Sender))
-                    {
-                        transceiver.SetCodecPreferences(codecs);
-                    }
-                }
-            }
-            sourceImage.texture = cam.targetTexture;
+            AddTrack();
 
 
+            pcOnIceConnectionChange = state => { OnIceConnectionChange(pc, state); };
             pc.OnIceCandidate = candidate =>
             {
                 try
                 {
                     Debug.Log("유저가 어드민에게 icecandidate 전달");
-                    target = "admin";
-                    RTCIceCandidate _candidate = new RTCIceCandidate(new RTCIceCandidateInit()
+                    CustomCandidate customCandidate = new CustomCandidate("candidate", "admin", "test", new RTCIceCandidateInit()
                     {
                         candidate = candidate.Candidate,
                         sdpMid = candidate.SdpMid,
-                        sdpMLineIndex = candidate.SdpMLineIndex,
+                        sdpMLineIndex = candidate.SdpMLineIndex
                     });
 
-                    Data data = new Data();
-                    data.type = "candidate";
-                    data.room = "test";
-                    data.candidate = _candidate;
-                    SendTo(data);
+                    string json = JsonMapper.ToJson(customCandidate);
+
+                    SendToJson(json);
                 }
                 catch (Exception error)
                 {
@@ -336,8 +317,40 @@ public class test : MonoBehaviour
                 }
             };
 
+            Debug.Log("handleLogin 종료");
         }
-        Debug.Log("handleLogin 종료");
+    }
+
+    private void AddTrack()
+    {
+        Debug.Log("AddTrack 함수 시작");
+        foreach (var track in videoStream.GetTracks())
+        {
+            pcSenders.Add(pc.AddTrack(track, videoStream));
+            Debug.Log($"videoStream");
+            Debug.Log(videoStream);
+        }
+
+        if (WebRTCSettings.UseVideoCodec != null)
+        {
+            var codecs = new[] { WebRTCSettings.UseVideoCodec };
+            foreach (var transceiver in pc.GetTransceivers())
+            {
+                if (pcSenders.Contains(transceiver.Sender))
+                {
+                    transceiver.SetCodecPreferences(codecs);
+                }
+            }
+        }
+
+        if (!videoUpdateStarted)
+        {
+            StartCoroutine(WebRTC.Update());
+            videoUpdateStarted = true;
+        }
+        Debug.Log("AddTrack 함수 끝");
+
+
 
     }
 
@@ -346,7 +359,12 @@ public class test : MonoBehaviour
         target = name;
         pc.SetRemoteDescription(ref offer);
 
-        var answer = pc.CreateAnswer();
+        var answerOption = new RTCOfferAnswerOptions()
+        {
+            iceRestart = true,
+            voiceActivityDetection = false,
+        };
+        var answer = pc.CreateAnswer(ref answerOption);
         await System.Threading.Tasks.Task.Run(() =>
         {
             while (true)
@@ -359,6 +377,39 @@ public class test : MonoBehaviour
             }
         });
         onCreateAnswerSuccess(pc, answer.Desc);
+    }
+
+    private void OnIceConnectionChange(RTCPeerConnection pc, RTCIceConnectionState state)
+    {
+        switch (state)
+        {
+            case RTCIceConnectionState.New:
+                Debug.Log($"{(pc)} IceConnectionState: New");
+                break;
+            case RTCIceConnectionState.Checking:
+                Debug.Log($"{(pc)} IceConnectionState: Checking");
+                break;
+            case RTCIceConnectionState.Closed:
+                Debug.Log($"{(pc)} IceConnectionState: Closed");
+                break;
+            case RTCIceConnectionState.Completed:
+                Debug.Log($"{(pc)} IceConnectionState: Completed");
+                break;
+            case RTCIceConnectionState.Connected:
+                Debug.Log($"{(pc)} IceConnectionState: Connected");
+                break;
+            case RTCIceConnectionState.Disconnected:
+                Debug.Log($"{(pc)} IceConnectionState: Disconnected");
+                break;
+            case RTCIceConnectionState.Failed:
+                Debug.Log($"{(pc)} IceConnectionState: Failed");
+                break;
+            case RTCIceConnectionState.Max:
+                Debug.Log($"{(pc)} IceConnectionState: Max");
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(state), state, null);
+        }
     }
 
     void onCreateAnswerSuccess(RTCPeerConnection pc, RTCSessionDescription answer)
@@ -381,44 +432,6 @@ public class test : MonoBehaviour
         ws.Send(jsonData);
         Debug.Log("answer을 어드민에게 전달");
 
-        pc.OnIceCandidate = candidate =>
-        {
-            try
-            {
-                Debug.Log("유저가 어드민에게 icecandidate 전달");
-                //RTCIceCandidate _candidate = new RTCIceCandidate(new RTCIceCandidateInit()
-                //{
-                //    candidate = candidate.Candidate,
-                //    sdpMid = candidate.SdpMid,
-                //    sdpMLineIndex = candidate.SdpMLineIndex,
-                //});
-
-                //Data data = new Data();
-                //data.type = "candidate";
-                //data.room = "test";
-                //data.name = "admin";
-                //data.candidate = _candidate;
-                //Debug.Log("data.candidate");
-                //Debug.Log(data.candidate);
-                //SendTo(data);
-
-                CustomCandidate customCandidate = new CustomCandidate("candidate", "admin", "test", new RTCIceCandidateInit()
-                {
-                    candidate = candidate.Candidate,
-                    sdpMid = candidate.SdpMid,
-                    sdpMLineIndex = candidate.SdpMLineIndex
-                });
-
-                string json = JsonMapper.ToJson(customCandidate);
-
-                SendToJson(json);
-            }
-            catch (Exception error)
-            {
-                Debug.Log("OnIceCandidate");
-                Debug.Log(error);
-            }
-        };
     }
 
     [Serializable]
@@ -440,7 +453,13 @@ public class test : MonoBehaviour
 
     public void handleAnswer(RTCSessionDescription answer)
     {
-        Debug.Log("handleAnswer");
+        if(!ws.IsAlive)
+        {
+            return;
+        }
+        pc.SetRemoteDescription(ref answer);
+        Debug.Log("유저가 Answer 등록");
+
     }
 
     public void handleCandidate(RTCIceCandidate candidate)
