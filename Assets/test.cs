@@ -10,6 +10,7 @@ using LitJson;
 using System.Text;
 using System.Collections.Generic;
 
+
 internal static class WebRTCSettings
 {
     public const int DefaultStreamWidth = 1280;
@@ -89,8 +90,12 @@ public class test : MonoBehaviour
     private static RTCConfiguration pc_config()
     {
         RTCConfiguration config = default;
-        config.iceServers = new[] { new RTCIceServer { urls = new[] { "stun:stun.l.google.com:19302" } } };
-
+        config.iceServers = new[] {
+            new RTCIceServer {
+            urls = new [] {"turn:183.96.152.34" },
+            credential = "fakeeyes0906",
+            username = "feturn"
+            }};
         return config;
     }
 
@@ -254,7 +259,7 @@ public class test : MonoBehaviour
             var configuration = pc_config();
 
             pc = new RTCPeerConnection(ref configuration);
-
+            target = "user";
             videoStream = null;
             MainThreadHelper.AddAction(() =>
             {
@@ -332,26 +337,21 @@ public class test : MonoBehaviour
 
     public async void handleOffer(RTCSessionDescription offer, string name)
     {
-        Debug.Log($"handOffer. (offer == default) == {offer.Equals(default(RTCSessionDescription))}");
-        Debug.Log($"handleOffer\nname: {name}\ntype: {offer.type}\nsdp: {offer.sdp}");
-
         target = name;
         pc.SetRemoteDescription(ref offer);
 
         var answer = pc.CreateAnswer();
-        Debug.Log($"CreateAnswer");
         await System.Threading.Tasks.Task.Run(() =>
         {
             while (true)
             {
                 if (answer.IsDone)
                 {
-                    Debug.Log($"CreateAnswer break");
+                    Debug.Log($"유저 answer 생성 완료");
                     break;
                 }
             }
         });
-        Debug.Log($"CreateAnswer done");
         onCreateAnswerSuccess(pc, answer.Desc);
     }
 
@@ -374,19 +374,46 @@ public class test : MonoBehaviour
         string jsonData = JsonMapper.ToJson(data);
         ws.Send(jsonData);
         Debug.Log("answer을 어드민에게 전달");
+
+        pc.OnIceCandidate = candidate =>
+        {
+            try
+            {
+                Debug.Log("유저가 어드민에게 icecandidate 전달");
+                RTCIceCandidate _candidate = new RTCIceCandidate(new RTCIceCandidateInit()
+                {
+                    candidate = candidate.Candidate,
+                    sdpMid = candidate.SdpMid,
+                    sdpMLineIndex = candidate.SdpMLineIndex,
+                });
+
+                //Data data = new Data();
+                //data.type = "candidate";
+                //data.room = "test";
+                //data.name = "admin";
+                //data.candidate = _candidate;
+                //Debug.Log("data.candidate");
+                //Debug.Log(data.candidate);
+                //SendTo(data);
+
+                string json = "{ \"type\": \"candidate\", \"name\": \"admin\", \"room\": \"test\", \"candidate\" : \" \" }";
+                SendToJson(json);
+            }
+            catch (Exception error)
+            {
+                Debug.Log("OnIceCandidate");
+                Debug.Log(error);
+            }
+        };
     }
 
     public void handleAnswer(RTCSessionDescription answer)
     {
         Debug.Log("handleAnswer");
-        //
     }
 
     public void handleCandidate(RTCIceCandidate candidate)
     {
-        Debug.Log("handleCandidate");
-        Debug.Log($"pc null: {pc == null}");
-        //
         pc.AddIceCandidate(candidate);
        Debug.Log("유저가 ICE candidate 등록");
     }
@@ -407,11 +434,29 @@ public class test : MonoBehaviour
         }
         try
         {
+            if(target == "")
+            {
+                message.name = "admin";
+            }
             string msg = JsonUtility.ToJson(message);
+            Debug.Log(msg);
             ws.Send(msg);
         }
         catch (Exception)
         {
+            throw;
+        }
+    }
+
+    public void SendToJson(string message)
+    {
+        try
+        {
+            ws.Send(message);
+        }
+        catch (Exception)
+        {
+            Debug.LogError("Invalid JSON");
             throw;
         }
     }
